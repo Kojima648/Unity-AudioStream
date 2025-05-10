@@ -6,7 +6,7 @@ using System.Collections.Concurrent;
 public class PCMAudioStreamPlayer : MonoBehaviour
 {
     public int sampleRate = 24000;
-    public int channels   = 1;
+    public int channels = 1;
     public int maxDurationSeconds = 300;
 
     private ConcurrentQueue<float> audioBuffer = new ConcurrentQueue<float>();
@@ -16,17 +16,10 @@ public class PCMAudioStreamPlayer : MonoBehaviour
     {
         audioSource = GetComponent<AudioSource>();
         audioSource.playOnAwake = false;
-        audioSource.loop       = true;
+        audioSource.loop = true;
 
-        int totalSamples = sampleRate * maxDurationSeconds;
-        var clip = AudioClip.Create(
-            "StreamClip",
-            totalSamples,
-            channels,
-            sampleRate,
-            true,
-            OnAudioRead
-        );
+        int samples = sampleRate * maxDurationSeconds;
+        var clip = AudioClip.Create("StreamClip", samples, channels, sampleRate, true, OnAudioRead);
         audioSource.clip = clip;
         audioSource.Play();
     }
@@ -46,20 +39,20 @@ public class PCMAudioStreamPlayer : MonoBehaviour
             data[i] = audioBuffer.TryDequeue(out var v) ? v : 0f;
     }
 
-    /// <summary>清空所有未播放的 PCM 样本</summary>
+    /// <summary>清空所有未播放的 PCM（每次新一轮播放前调用）</summary>
     public void ClearQueue()
     {
         while (audioBuffer.TryDequeue(out _)) { }
         Debug.Log("[AudioPlayer] 🔄 PCM 缓冲已清空");
     }
 
-    /// <summary>立即停止 AudioSource 播放</summary>
-    public void StopPlayback()
+    /// <summary>暂停播放（保留已缓冲 PCM）</summary>
+    public void PausePlayback()
     {
         if (audioSource.isPlaying)
         {
-            audioSource.Stop();
-            Debug.Log("[AudioPlayer] ⏹ Playback stopped");
+            audioSource.Pause();
+            Debug.Log("[AudioPlayer] ⏸ Playback paused");
         }
     }
 }
