@@ -55,4 +55,29 @@ public class PCMAudioStreamPlayer : MonoBehaviour
             Debug.Log("[AudioPlayer] ⏸ Playback paused");
         }
     }
+
+    public void ResumePlayback()
+    {
+        if (!audioSource.isPlaying)
+        {
+            audioSource.Play();
+            Debug.Log("[AudioPlayer] ▶️ Resume playback");
+        }
+    }
+
+    public void ResetClip()
+    {
+        audioSource.Stop();
+
+        int samples = sampleRate * maxDurationSeconds;
+        var clip = AudioClip.Create("StreamClip", samples, channels, sampleRate, true, OnAudioRead);
+
+        audioSource.clip = clip;
+        audioSource.loop = true;
+        audioSource.Play();
+
+        Debug.Log("[AudioPlayer] 🔄 AudioClip 已重置");
+    }
+
+
 }

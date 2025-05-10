@@ -1,5 +1,4 @@
-﻿// AliyunTTSWebSocket.cs
-using UnityEngine;
+﻿using UnityEngine;
 using System;
 using System.Collections.Generic;
 using Best.WebSockets;
@@ -15,7 +14,7 @@ public class AliyunTTSWebSocket : MonoBehaviour
     private WebSocket ws;
     private string taskId;
     private bool manualStopped = false;
-    private Queue<string> textQueue = new Queue<string>();
+    private Queue<string> textQueue = new();
     private PCMAudioStreamPlayer audioPlayer;
 
     public bool IsConnected => ws != null && ws.IsOpen;
@@ -25,40 +24,59 @@ public class AliyunTTSWebSocket : MonoBehaviour
         audioPlayer = GetComponent<PCMAudioStreamPlayer>();
     }
 
-    /// <summary>
-    /// 入队所有段落并启动循环会话
-    /// </summary>
     public void EnqueueSegments(IEnumerable<string> segments)
     {
-        manualStopped = false;
-        textQueue.Clear();
-        foreach (var s in segments) textQueue.Enqueue(s.Trim());
+        ResetState(); // ✅ 重置状态
 
-        // 首次清空旧缓冲
+        foreach (var s in segments)
+            textQueue.Enqueue(s.Trim());
+
         audioPlayer.ClearQueue();
+        audioPlayer.ResetClip(); // ✅ 清空内部播放状态 + clip重建
 
         Debug.Log($"[TTS] EnqueueSegments → {textQueue.Count} 段入队");
+
         if (!IsConnected)
-            Connect();      // 建立连接后 OnOpen 会触发 StartSession
+            Connect();
         else
-            StartSession(); // 已连则直接启动第一段
+            StartSession();
     }
 
-    /// <summary>
-    /// 手动中断：立即暂停、发送 StopSynthesis 并阻止后续
-    /// </summary>
     public void StopSynthesis()
     {
         if (!IsConnected) return;
+
         manualStopped = true;
-        Debug.Log("[TTS] ⏹ Manual StopSynthesis");
-        SendControl("StopSynthesis");
+        textQueue.Clear();
+        audioPlayer.ClearQueue();
         audioPlayer.PausePlayback();
+
+        Debug.Log("[TTS] ⏹ Manual Stop");
+
+        SendControl("StopSynthesis");
+
+        ws.Close();
+        ws = null; // ✅ 关键：确保重新点击播放能重新 Connect()
     }
 
-    /// <summary>
-    /// 建立 WS 并在 OnOpen 后启动会话
-    /// </summary>
+
+    public void ResetState()
+    {
+        manualStopped = false;
+        textQueue.Clear();
+        audioPlayer.ClearQueue();
+
+        if (ws != null)
+        {
+            ws.OnOpen -= OnOpen;
+            ws.OnMessage -= OnMsg;
+            ws.OnBinary -= OnBinary;
+            ws.OnClosed -= OnClosed;
+            ws.Close();
+            ws = null;
+        }
+    }
+
     private void Connect()
     {
         Debug.Log("[TTS] ▶ Connecting WebSocket...");
@@ -76,15 +94,13 @@ public class AliyunTTSWebSocket : MonoBehaviour
         StartSession();
     }
 
-    /// <summary>
-    /// 为当前队头段落创建新会话
-    /// </summary>
     private void StartSession()
     {
         if (manualStopped || textQueue.Count == 0) return;
 
         taskId = Guid.NewGuid().ToString("N");
         Debug.Log("[TTS] ▶ StartSynthesis");
+
         SendControl("StartSynthesis", new Dictionary<string, object> {
             {"voice","zhixiaoxia"},
             {"format","PCM"},
@@ -99,12 +115,12 @@ public class AliyunTTSWebSocket : MonoBehaviour
 
     private void OnMsg(WebSocket w, string msg)
     {
-        Debug.Log("[WS Msg] " + msg);
         if (manualStopped) return;
+
+        Debug.Log("[WS Msg] " + msg);
 
         if (msg.Contains("\"name\":\"SynthesisStarted\""))
         {
-            // 握手完成，发本段
             if (textQueue.Count > 0)
             {
                 var next = textQueue.Dequeue();
@@ -114,13 +130,11 @@ public class AliyunTTSWebSocket : MonoBehaviour
         }
         else if (msg.Contains("\"name\":\"SentenceEnd\""))
         {
-            // 本段结束，发 StopSynthesis
             Debug.Log("[TTS] 🔸 SentenceEnd – segment done, StopSynthesis");
             SendControl("StopSynthesis");
         }
         else if (msg.Contains("\"name\":\"SynthesisCompleted\""))
         {
-            // 服务端确认本段全结束，立即新一轮
             Debug.Log("[TTS] ✅ SynthesisCompleted – starting next");
             StartSession();
         }
@@ -128,10 +142,13 @@ public class AliyunTTSWebSocket : MonoBehaviour
 
     private void OnBinary(WebSocket w, BufferSegment bs)
     {
-        if (manualStopped || bs.Count == 0) return;
+        if (manualStopped || bs.Count == 0 || !IsConnected) return;
+
         var pcm = new byte[bs.Count];
         Array.Copy(bs.Data, bs.Offset, pcm, 0, bs.Count);
         audioPlayer.PushPCM(pcm);
+        audioPlayer.ResumePlayback(); // ✅ 确保播放已恢复
+
     }
 
     private void OnClosed(WebSocket w, WebSocketStatusCodes code, string reason)
@@ -141,6 +158,8 @@ public class AliyunTTSWebSocket : MonoBehaviour
 
     private void SendControl(string name, Dictionary<string, object> payload = null)
     {
+        if (!IsConnected) return;
+
         var header = new Dictionary<string, object> {
             {"message_id", Guid.NewGuid().ToString("N")},
             {"task_id", taskId},
